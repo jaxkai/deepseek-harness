@@ -1,0 +1,73 @@
+name: Desktop exe
+
+# Windows packaging lane for the dsh desktop shell (apps/desktop). Produces a
+# portable win32-x64 application directory — renamed Electron executable plus
+# resources/app with the deployed dsh host closure — as a downloadable
+# artifact. Unsigned: SmartScreen will warn until a signing certificate lands.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/desktop-runtime/**'
+      - 'scripts/build-exe-for-desktop.ts'
+      - '.github/workflows/desktop-exe.yml'
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: Comma-separated targets to build (see scripts/build-exe-for-desktop.ts).
+        type: string
+        required: false
+        default: 'win32-x64'
+
+concurrency:
+  group: desktop-exe-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  windows:
+    name: windows x64 / portable exe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and package the desktop exe
+        run: pnpm exec tsx scripts/build-exe-for-desktop.ts --targets=${{ inputs.targets || 'win32-x64' }}
+
+      # Proves the packaged launch mechanism on real Windows: the renamed
+      # executable acting as Node runs the deployed dsh CLI — the exact child
+      # path the desktop main uses for its supervised host.
+      - name: "Smoke: packaged exe as Node runs the deployed dsh CLI"
+        run: |
+          $app = "dist-desktop\win32-x64"
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & "$app\DSHDesktop.exe" "$app\resources\app\node_modules\@deepseek-ai\dsh\lib\bin.js" --version
+          $code = $LASTEXITCODE
+          Remove-Item env:ELECTRON_RUN_AS_NODE
+          exit $code
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-portable
+          path: dist-desktop/win32-x64
+          if-no-files-found: error

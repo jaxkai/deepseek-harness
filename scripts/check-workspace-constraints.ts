@@ -59,6 +59,7 @@ const appPackageFiles: Readonly<Record<string, readonly string[]>> = {
   // The desktop shell has no npm payload yet; its distribution artifact is a
   // future packaged installer, so the policy pins an empty files list.
   '@deepseek-ai/dsh-desktop': [],
+  '@deepseek-ai/dsh-desktop-runtime': [],
 }
 
 /** The subset of package.json fields this constraint check cares about. */
