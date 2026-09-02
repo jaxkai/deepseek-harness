@@ -56,6 +56,9 @@ const appPackageFiles: Readonly<Record<string, readonly string[]>> = {
   // The Web build emits sourcemaps for browser debugging; publishing them is
   // what the payload policy forbids, so the bundle ships without them.
   '@deepseek-ai/dsh-web-frontend': ['dist', '!dist/**/*.map'],
+  // The desktop shell has no npm payload yet; its distribution artifact is a
+  // future packaged installer, so the policy pins an empty files list.
+  '@deepseek-ai/dsh-desktop': [],
 }
 
 /** The subset of package.json fields this constraint check cares about. */
