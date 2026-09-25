@@ -73,7 +73,7 @@ async function createWindow(): Promise<void> {
   })
   window.on('closed', () => { if (mainWindow === window) mainWindow = undefined })
   mainWindow = window
-  await window.loadURL(handle.origin)
+  await window.loadURL(handle.launchUrl)
 }
 
 if (!app.requestSingleInstanceLock()) {

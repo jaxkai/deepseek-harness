@@ -378,8 +378,7 @@ class DesktopExeBuild {
     await cp(resolve(root, APP_SOURCE, 'lib'), join(this.staging, 'lib'), { recursive: true })
     const main = join(this.staging, 'lib', 'types', 'main.js')
     const cliBin = join(this.staging, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-    const cliConfig = join(this.staging, 'node_modules', '@deepseek-ai', 'dsh', 'config')
-    for (const [label, path] of [['desktop main', main], ['dsh CLI bin', cliBin], ['dsh CLI config', cliConfig]] as const) {
+    for (const [label, path] of [['desktop main', main], ['dsh CLI bin', cliBin]] as const) {
       if (!await pathExists(path)) {
         throw new Error(`build-exe-for-desktop: staged ${label} missing at ${relative(root, path)} — build and deploy must precede packaging.`)
       }

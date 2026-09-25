@@ -19,6 +19,12 @@ type HostOwnership = 'adopted' | 'spawned'
 /** The ready host: its canonical loopback origin, how it was obtained, and its `host.describe` value. */
 export interface HostHandle {
   readonly origin: string
+  /**
+   * The full readiness URL when the host published one (a per-launch token
+   * query on current masters); the window loads this so the page can hand
+   * the token in for its session auth.
+   */
+  readonly launchUrl: string
   readonly ownership: HostOwnership
   readonly describe: unknown
 }
@@ -203,7 +209,7 @@ export class HostSupervisor {
     if (fixedOrigin !== undefined) {
       const describe = await this.tryProbe(fixedOrigin)
       if (describe !== undefined) {
-        this.handle = { origin: fixedOrigin, ownership: 'adopted', describe }
+        this.handle = { origin: fixedOrigin, launchUrl: fixedOrigin, ownership: 'adopted', describe }
         return this.handle
       }
     }
@@ -223,11 +229,15 @@ export class HostSupervisor {
     this.child = child
     let output = ''
     let lineOrigin: string | undefined
+    let lineUrl: string | undefined
     let exitCode: number | null | undefined
     child.onLine((line) => {
       if (lineOrigin === undefined) {
         const url = parseWebUrlLine(line)
-        if (url !== undefined) lineOrigin = url.origin
+        if (url !== undefined) {
+          lineOrigin = url.origin
+          lineUrl = url.href
+        }
       }
       output = appendBounded(output, line)
     })
@@ -238,7 +248,7 @@ export class HostSupervisor {
       if (origin !== undefined) {
         const describe = await this.tryProbe(origin)
         if (describe !== undefined) {
-          this.handle = { origin, ownership: 'spawned', describe }
+          this.handle = { origin, launchUrl: lineUrl ?? origin, ownership: 'spawned', describe }
           return this.handle
         }
       }

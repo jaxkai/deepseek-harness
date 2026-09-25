@@ -2,7 +2,7 @@
 
 Status: implemented
 
-中文 | [English](2026-09-02-desktop-electron-shell.md)
+[English](2026-09-02-desktop-electron-shell.md) | 中文
 
 ## Problem
 
@@ -31,6 +31,7 @@ Harness 的 GUI 目前只是 `dsh --profile web` 服务的一个浏览器页面�
 - 桌面面在宿主支持的每个平台上都与 web 面同等强大，包括 Windows pwsh/ACL 执行链，且客户端代码零复制。
 - 单元套件以无进程方式钉住监管器生命周期（收养、拉起、URL 行端口发现、退出/超时诊断、只杀亲生、并发 ensure 共享）；`tests/host-boot.e2e.ts` 从源码经监管器启动真实组合，在未构建前端 dist 的检出上自跳过，与免密 e2e 通道的自跳过约定一致。
 - 打包产物是可移植目录而非安装器：`scripts/build-exe-for-desktop.ts` 部署 `@deepseek-ai/dsh-desktop-runtime` 闭包（与 `python/sdk-runtime` 同理的纯依赖清单根，补齐 pnpm deploy 不安装的全部 peer），并把经过 SHA-256 校验的 Electron 运行时包在外层；`Desktop exe` 工作流在 Windows runner 上构建 win32-x64 产物并做打包启动冒烟——改名后的可执行文件以 Node 模式拉起部署好的 `dsh --profile web` 宿主。本地通道在 Linux 上证明同一机制。安装器、代码签名与自动更新仍延后：exe 未签名，SmartScreen 会告警。
+- 桌面窗口加载宿主发布的完整就绪 URL，让宿主发布的一次性 token 查询参数（浏览器会话认证）送达页面。收养的宿主无法做到：其 token 行打在启动者自己的 stdout 上，收养路径只能加载无 token 的 URL，浏览器会话退回页面的未认证兜底。
 - Electron 的二进制下载 postinstall 在 `pnpm-workspace.yaml` 的 `allowBuilds` 中保持拒绝（打包管线自行下载运行时 zip 并校验；门禁从不启动外壳，本地想运行的开发者通过 approve-builds 获取二进制）。
 - Windows `.cmd` 覆盖分支仍仅由单元测试钉住；打包通道验证的是默认可执行启动，不是 `DSH_DESKTOP_BIN` 覆盖。
 - 回环栅栏是可达性策略而非认证——在补上每次启动的能力令牌或命名管道传输之前，不能宣称抗本机恶意进程。
