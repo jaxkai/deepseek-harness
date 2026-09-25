@@ -7,10 +7,9 @@
  */
 
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { chmod, cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { chmod, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -474,9 +473,10 @@ class DesktopExeBuild {
     if (expected === undefined) {
       throw new Error(`build-exe-for-desktop: SHASUMS256.txt carries no entry for ${name}.`)
     }
+    // Stage inside the cache directory: a tempdir on another drive turns the
+    // publication rename into EXDEV on Windows runners (C: temp, D: workspace).
     await mkdir(dirname(cache), { recursive: true })
-    const partial = await mkdtemp(join(tmpdir(), 'dsh-desktop-'))
-    const download = join(partial, name)
+    const download = join(dirname(cache), `.${name}.${randomUUID()}.download`)
     try {
       const actual = await downloadFileWithSha256(`${base}v${version}/${name}`, download)
       if (actual !== expected) {
@@ -484,7 +484,7 @@ class DesktopExeBuild {
       }
       await rename(download, cache)
     } finally {
-      await rm(partial, { recursive: true, force: true })
+      await rm(download, { force: true })
     }
     console.log(`build-exe-for-desktop: verified and cached ${relative(root, cache)}`)
     return cache
