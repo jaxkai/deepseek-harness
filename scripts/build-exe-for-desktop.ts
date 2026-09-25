@@ -178,16 +178,18 @@ function formatCommand(command: string, args: readonly string[]): string {
 }
 
 /**
- * The pnpm invocation for this host: the `pnpm` executable on POSIX, and the
- * `.cmd` shim wrapped through `cmd /D /S /C` on Windows (Node refuses to
- * spawn `.cmd` directly).
+ * The pnpm invocation for this host: the `pnpm` executable on POSIX, and on
+ * Windows the `.cmd` shim run through `cmd /D /S /C` as one joined command
+ * string. Node never spawns `.cmd` directly, and the string must carry no
+ * embedded quotes — Node backslash-escapes them for the Windows command
+ * line, which cmd cannot read back — so callers pass space-free arguments
+ * (paths relative to the run cwd).
  * @param args - the pnpm arguments.
  * @returns the executable and its arguments.
  */
 function pnpmCommand(args: readonly string[]): { file: string; args: string[] } {
   if (process.platform !== 'win32') return { file: 'pnpm', args: [...args] }
-  const command = ['pnpm', ...args].map(part => (part.includes(' ') ? `"${part}"` : part)).join(' ')
-  return { file: 'cmd.exe', args: ['/D', '/S', '/C', `"${command}"`] }
+  return { file: 'cmd.exe', args: ['/D', '/S', '/C', ['pnpm', ...args].join(' ')] }
 }
 
 /** True when the path exists, without throwing on missing parents. */
@@ -294,7 +296,9 @@ class DesktopExeBuild {
       '--config.node-linker=hoisted',
       '--config.auto-install-peers=true',
       '--config.link-workspace-packages=true',
-      this.staging,
+      // Relative to the run cwd: an absolute checkout path could carry
+      // spaces, which the cmd /C command string cannot quote.
+      relative(root, this.staging),
     ])
     await this.run('deploy', pnpm.file, pnpm.args)
     await this.restoreLegacyHoists()
@@ -486,15 +490,16 @@ class DesktopExeBuild {
     return cache
   }
 
-  /** Extract one zip into a directory; PowerShell on Windows, `unzip` elsewhere. */
+  /**
+   * Extract one zip into a directory. Windows runs the bsdtar that ships
+   * with the OS through plain argv — PowerShell `-Command` strings cannot
+   * carry embedded quotes through Node's Windows command-line escaping.
+   * @param zip - the zip file path.
+   * @param destination - the directory to extract into.
+   */
   private async extract(zip: string, destination: string): Promise<void> {
     if (process.platform === 'win32') {
-      await this.run('extract', 'powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        `Expand-Archive -LiteralPath ${JSON.stringify(zip)} -DestinationPath ${JSON.stringify(destination)} -Force`,
-      ])
+      await this.run('extract', 'tar.exe', ['-xf', zip, '-C', destination])
       return
     }
     await this.run('extract', 'unzip', ['-q', zip, '-d', destination])

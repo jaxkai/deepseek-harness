@@ -672,7 +672,10 @@ describe('Issue lifecycle workflow', () => {
     expect(lifecyclePullRequest.types).not.toContain('ready_for_review')
     expect(lifecyclePullRequest.types).toContain('review_requested')
     expect(lifecycleReview.types).toEqual(['submitted'])
-    const gated = "${{ github.event_name != 'pull_request_review' || github.event.review.state == 'changes_requested' }}"
+    // The write-capable steps additionally require the issue-management App
+    // to be configured: a deployment without DSH_ISSUE_APP_CLIENT_ID (a fork)
+    // skips the board automation rather than failing the check.
+    const gated = "${{ (github.event_name != 'pull_request_review' || github.event.review.state == 'changes_requested') && vars.DSH_ISSUE_APP_CLIENT_ID != '' }}"
     const steps = lifecycleJob.steps.filter(isRecord)
     const tokenStep = steps.find(s => s.name === 'Create project token')
     const handleStep = steps.find(s => s.name === 'Handle repository event')
