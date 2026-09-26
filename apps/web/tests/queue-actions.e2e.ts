@@ -241,6 +241,16 @@ describe('web e2e: queue row actions', () => {
     await compareOrRefreshGolden(LAYOUT_EXPECTED, layoutSnapshot, MODE)
 
     const expectAlignedContextPanels = async () => {
+      // A viewport resize reflows the stacked dock asynchronously, so a
+      // single synchronous measurement can catch a panel still at its
+      // pre-resize width; poll the shared width until the reflow landed,
+      // then assert the full relation once.
+      await expect.poll(async () => {
+        const todoBox = await page.locator('[data-testid="todo-panel"]').boundingBox()
+        const goalBox = await page.locator('[data-goal-bar] > div').boundingBox()
+        if (todoBox === null || goalBox === null) return Number.NaN
+        return Math.abs(todoBox.width - goalBox.width)
+      }, { timeout: 10_000 }).toBeLessThan(0.05)
       const queuePanelBox = await page.locator('[data-queue-dock] > div').boundingBox()
       const todoBox = await page.locator('[data-testid="todo-panel"]').boundingBox()
       const goalBox = await page.locator('[data-goal-bar] > div').boundingBox()
