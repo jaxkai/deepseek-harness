@@ -641,8 +641,14 @@ describe('headless recorded-session snapshots', () => {
   })
 
   for (const scenario of scenarios) {
+    // pwsh-platform scenarios mount the Windows ACL sandbox composition: on
+    // a non-Windows host pwsh may still execute (pwsh ships preinstalled on
+    // hosted Linux images), but the composition cannot confine there and the
+    // session degrades to the danger-full-access facts no single per-scenario
+    // fixture can pin. They run on Windows hosts only — the mirror of the
+    // posix-platform skip on win32 below.
     const skipped = scenario.manifest.platform === 'posix' && process.platform === 'win32'
-      || scenario.manifest.platform === 'pwsh' && !hasPwsh
+      || scenario.manifest.platform === 'pwsh' && (process.platform !== 'win32' || !hasPwsh)
       || mode === 'record' && scenario.manifest.recording === 'authored'
     const scenarioTest = skipped ? it.skip : mode === 'replay' ? it.concurrent : it
     scenarioTest(`${mode}s ${scenario.name} through dsh --profile headless`, async () => {
