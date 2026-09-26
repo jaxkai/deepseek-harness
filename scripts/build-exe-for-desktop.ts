@@ -6,7 +6,6 @@
  * the portable directory is the artifact; a packaged installer is deferred.
  */
 
-import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { chmod, cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -14,7 +13,12 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web'
-import { parseArgs } from 'node:util'
+import {
+  ExeBuilderCli,
+  requireTargetPart,
+  runExeStep,
+  parseTargetSpecParts,
+} from './exe-builder-kit.ts'
 
 const root = resolve(import.meta.dirname, '..')
 
@@ -45,14 +49,6 @@ function executableName(platform: Platform): string {
   return platform === 'win32' ? 'DSHDesktop.exe' : 'dsh-desktop'
 }
 
-function isPlatform(value: string): value is Platform {
-  return (PLATFORMS as readonly string[]).includes(value)
-}
-
-function isArch(value: string): value is Arch {
-  return (ARCHES as readonly string[]).includes(value)
-}
-
 /** One packaging target, e.g. `win32-x64`. */
 class Target {
   private constructor(
@@ -75,87 +71,28 @@ class Target {
    * @returns the parsed target.
    */
   static parse(spec: string): Target {
-    const parts = spec.split('-')
-    const [platform, arch] = parts
-    if (parts.length !== 2 || platform === undefined || arch === undefined) {
-      throw new Error(`build-exe-for-desktop: target ${JSON.stringify(spec)} must be <platform>-<arch>, e.g. win32-x64.`)
-    }
-    if (!isPlatform(platform)) {
-      throw new Error(`build-exe-for-desktop: target ${JSON.stringify(spec)}: platform must be one of ${PLATFORMS.join(', ')}, got ${JSON.stringify(platform)}.`)
-    }
-    if (!isArch(arch)) {
-      throw new Error(`build-exe-for-desktop: target ${JSON.stringify(spec)}: arch must be one of ${ARCHES.join(', ')}, got ${JSON.stringify(arch)}.`)
-    }
-    return new Target(platform, arch)
+    const [rawPlatform, rawArch] = parseTargetSpecParts(spec, LABEL, '<platform>-<arch>', 'win32-x64')
+    return new Target(
+      requireTargetPart(rawPlatform, PLATFORMS, 'platform', LABEL, spec),
+      requireTargetPart(rawArch, ARCHES, 'arch', LABEL, spec),
+    )
   }
 
   /** Resolve the host-platform default. */
   static host(): Target {
-    if (!isPlatform(process.platform)) {
-      throw new Error(`build-exe-for-desktop: unsupported host platform ${process.platform}; pass --targets explicitly.`)
-    }
-    if (!isArch(process.arch)) {
-      throw new Error(`build-exe-for-desktop: unsupported host arch ${process.arch}; pass --targets explicitly.`)
-    }
-    return new Target(process.platform, process.arch)
+    return new Target(
+      requireTargetPart(process.platform, PLATFORMS, 'host platform', LABEL, process.platform),
+      requireTargetPart(process.arch, ARCHES, 'host arch', LABEL, process.arch),
+    )
   }
 }
 
-/** Validated CLI configuration; construction owns help and parse-error exits. */
-class BuildCli {
-  private constructor(
-    readonly targets: readonly Target[],
-    readonly skipBuild: boolean,
-    readonly dryRun: boolean,
-  ) {}
+/** This builder's label for kit-reported errors. */
+const LABEL = 'build-exe-for-desktop'
 
-  /**
-   * Parse argv. Help exits 0; malformed flags exit 1.
-   * @param argv - the raw arguments (`process.argv.slice(2)`).
-   * @returns the parsed, validated configuration.
-   */
-  static parse(argv: string[]): BuildCli {
-    let values: ReturnType<typeof BuildCli.parseRaw>
-    try {
-      values = BuildCli.parseRaw(argv)
-    } catch (error) {
-      console.error(`build-exe-for-desktop: ${error instanceof Error ? error.message : String(error)}\n`)
-      console.error(BuildCli.usage())
-      process.exit(1)
-    }
-    if (values.help) {
-      console.log(BuildCli.usage())
-      process.exit(0)
-    }
-    const targets = values.targets === undefined
-      ? [Target.host()]
-      : values.targets.split(',').map(part => part.trim()).filter(part => part !== '').map(spec => Target.parse(spec))
-    if (targets.length === 0) throw new Error('build-exe-for-desktop: --targets is empty.')
-    const seen = new Set<string>()
-    for (const target of targets) {
-      const key = target.spec
-      if (seen.has(key)) {
-        throw new Error(`build-exe-for-desktop: duplicate target ${key} in --targets; output directory names would collide.`)
-      }
-      seen.add(key)
-    }
-    return new BuildCli(targets, values['skip-build'], values['dry-run'])
-  }
-
-  private static parseRaw(argv: string[]) {
-    return parseArgs({
-      args: argv,
-      options: {
-        'targets': { type: 'string' },
-        'skip-build': { type: 'boolean', default: false },
-        'dry-run': { type: 'boolean', default: false },
-        'help': { type: 'boolean', default: false },
-      },
-    }).values
-  }
-
-  private static usage(): string {
-    return `Usage: tsx scripts/build-exe-for-desktop.ts [--targets=<platform>-<arch>,…]
+/** The builder's usage text. */
+function usage(): string {
+  return `Usage: tsx scripts/build-exe-for-desktop.ts [--targets=<platform>-<arch>,…]
 
 Options:
   --targets     comma-separated targets: win32-x64, win32-arm64, linux-x64, linux-arm64,
@@ -163,17 +100,6 @@ Options:
   --skip-build  skip the workspace build; lib/ artifacts must already exist
   --dry-run     print every command and filesystem change instead of executing
   -h, --help    show this help`
-  }
-}
-
-/**
- * Render a command for logs and errors, quoting arguments with spaces.
- * @param command - the executable.
- * @param args - its arguments.
- * @returns the printable command line.
- */
-function formatCommand(command: string, args: readonly string[]): string {
-  return [command, ...args].map(part => (part.includes(' ') ? JSON.stringify(part) : part)).join(' ')
 }
 
 /**
@@ -254,7 +180,7 @@ class DesktopExeBuild {
   /** The cleared deploy target, copied into every packaging target. */
   readonly staging = resolve(root, OUT_DIR, 'staging')
 
-  constructor(private readonly cli: BuildCli) {}
+  constructor(private readonly cli: ExeBuilderCli<Target>) {}
 
   /** Verify the closure before compiling or packaging. */
   async verifyClosure(): Promise<void> {
@@ -310,6 +236,10 @@ class DesktopExeBuild {
    * instance and a symlink-free packaged payload.
    */
   private async restoreLegacyHoists(): Promise<void> {
+    // Deliberate parallel of the python builder's own restore loop; the
+    // narrow ignore range is the sanctioned exception for documented
+    // parallel implementations (quality-gates Agent Note).
+    /* jscpd:ignore-start */
     const manifest = JSON.parse(await readFile(join(this.staging, 'package.json'), 'utf8')) as {
       dependencies?: Record<string, string>
     }
@@ -336,6 +266,7 @@ class DesktopExeBuild {
     if (restored.length > 0) {
       console.log(`build-exe-for-desktop: restored legacy deploy hoists: ${restored.join(', ')}`)
     }
+    /* jscpd:ignore-end */
   }
 
   /** Replace deploy-time package links with files, removing `.bin` links entirely. */
@@ -506,43 +437,30 @@ class DesktopExeBuild {
   }
 
   /**
-   * Run one subprocess with inherited stdio. Spawn and non-zero-exit errors
-   * include the command; dry runs only print it.
+   * Run one subprocess step through the shared runner.
    * @param label - the step name used in logs and error messages.
    * @param command - the executable.
    * @param args - its arguments.
    */
   private async run(label: string, command: string, args: string[]): Promise<void> {
-    const printable = formatCommand(command, args)
-    if (this.cli.dryRun) {
-      console.log(`build-exe-for-desktop: [dry-run] ${printable}`)
-      return
-    }
-    console.log(`build-exe-for-desktop: ${label}: ${printable}`)
-    await new Promise<void>((resolvePromise, reject) => {
-      const child = spawn(command, args, {
-        cwd: root,
-        stdio: 'inherit',
-        // Artifact builds must not mutate or validate a developer's Git hooks.
-        env: { ...process.env, CI: 'true' },
-      })
-      child.once('error', (error) => {
-        reject(new Error(`build-exe-for-desktop: ${label} failed to spawn: ${error.message} (${printable})`))
-      })
-      child.once('exit', (code, signal) => {
-        if (code === 0) {
-          resolvePromise()
-          return
-        }
-        const cause = code === null ? `signal ${signal ?? 'unknown'}` : `exit code ${code}`
-        reject(new Error(`build-exe-for-desktop: ${label} failed (${cause}): ${printable}`))
-      })
-    })
+    await runExeStep({ prefix: LABEL, step: label, command, args, dryRun: this.cli.dryRun, cwd: root })
   }
 }
 
 async function main(): Promise<void> {
-  const cli = BuildCli.parse(process.argv.slice(2))
+  // Deliberate parallel of the python builder's own wiring into the shared
+  // CLI class; the narrow ignore range is the sanctioned exception for
+  // documented parallel implementations (quality-gates Agent Note).
+  /* jscpd:ignore-start */
+  const cli = ExeBuilderCli.parse(process.argv.slice(2), {
+    label: LABEL,
+    usage: usage(),
+    host: () => Target.host(),
+    parse: spec => Target.parse(spec),
+    key: target => target.spec,
+    duplicate: key => `duplicate target ${key} in --targets; output directory names would collide.`,
+  })
+  /* jscpd:ignore-end */
   const pipeline = new DesktopExeBuild(cli)
   console.log(`build-exe-for-desktop: targets: ${cli.targets.map(target => target.spec).join(', ')}`)
   await pipeline.verifyClosure()
