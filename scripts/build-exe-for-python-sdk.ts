@@ -6,14 +6,21 @@
  * runtime imports that pkg cannot discover statically.
  */
 
-import { spawn } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { chmod, copyFile, cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve, sep } from 'node:path'
-import { parseArgs } from 'node:util'
+import {
+  ExeBuilderCli,
+  parseTargetSpecParts,
+  requireTargetPart,
+  runExeStep,
+} from './exe-builder-kit.ts'
 import { resolveLinuxNodePtyAddon, resolveWindowsNodePtyAddons } from './build-exe-for-python-sdk-native-pty.ts'
 
 const root = resolve(import.meta.dirname, '..')
+
+/** This builder's label for kit-reported errors. */
+const LABEL = 'build-exe-for-python-sdk'
 
 /** The closure manifest whose dependencies define the executable. */
 const DEPLOY_ROOT_PACKAGE = 'dsh-python-runtime-closure'
@@ -68,14 +75,6 @@ const ARCHES = ['x64', 'arm64'] as const
 type Platform = (typeof PLATFORMS)[number]
 type Arch = (typeof ARCHES)[number]
 
-function isPlatform(value: string): value is Platform {
-  return (PLATFORMS as readonly string[]).includes(value)
-}
-
-function isArch(value: string): value is Arch {
-  return (ARCHES as readonly string[]).includes(value)
-}
-
 /**
  * A parsed pkg target triple, constructed from `--targets` or the host.
  */
@@ -100,20 +99,12 @@ class Target {
    * @returns the parsed target.
    */
   static parse(spec: string): Target {
-    const parts = spec.split('-')
-    const [nodeRange, platform, arch] = parts
-    if (parts.length !== 3 || nodeRange === undefined || platform === undefined || arch === undefined) {
-      throw new Error(`build-exe-for-python-sdk: target ${JSON.stringify(spec)} must be <nodeRange>-<platform>-<arch>, e.g. node24-linux-x64.`)
-    }
+    const [nodeRange, rawPlatform, rawArch] = parseTargetSpecParts(spec, LABEL, '<nodeRange>-<platform>-<arch>', 'node24-linux-x64')
     if (!/^node\d+$/.test(nodeRange)) {
       throw new Error(`build-exe-for-python-sdk: target ${JSON.stringify(spec)}: node range must look like node24, got ${JSON.stringify(nodeRange)}.`)
     }
-    if (!isPlatform(platform)) {
-      throw new Error(`build-exe-for-python-sdk: target ${JSON.stringify(spec)}: platform must be one of ${PLATFORMS.join(', ')}, got ${JSON.stringify(platform)}.`)
-    }
-    if (!isArch(arch)) {
-      throw new Error(`build-exe-for-python-sdk: target ${JSON.stringify(spec)}: arch must be one of ${ARCHES.join(', ')}, got ${JSON.stringify(arch)}.`)
-    }
+    const platform = requireTargetPart(rawPlatform, PLATFORMS, 'platform', LABEL, spec)
+    const arch = requireTargetPart(rawArch, ARCHES, 'arch', LABEL, spec)
     if (platform === 'win' && arch !== 'x64') {
       throw new Error(`build-exe-for-python-sdk: target ${JSON.stringify(spec)}: Windows supports x64 only.`)
     }
@@ -146,79 +137,20 @@ class Target {
   }
 }
 
-/**
- * Validated CLI configuration; construction owns help and parse-error exits.
- */
-class BuildCli {
-  private constructor(
-    /** Build targets; defaults to the host platform only. */
-    readonly targets: readonly Target[],
-    /** Skip step 1 (`pnpm run build`); lib/ artifacts must already exist. */
-    readonly skipBuild: boolean,
-    /** Print every command and config patch instead of executing. */
-    readonly dryRun: boolean,
-  ) {}
-
-  /**
-   * Parse argv. Help exits 0; malformed flags exit 1; invalid or colliding
-   * targets throw.
-   * @param argv - the raw arguments (`process.argv.slice(2)`).
-   * @returns the parsed, validated configuration.
-   */
-  static parse(argv: string[]): BuildCli {
-    let values: ReturnType<typeof BuildCli.parseRaw>
-    try {
-      values = BuildCli.parseRaw(argv)
-    } catch (error) {
-      console.error(`build-exe-for-python-sdk: ${error instanceof Error ? error.message : String(error)}\n`)
-      console.error(BuildCli.usage())
-      process.exit(1)
-    }
-    if (values.help) {
-      console.log(BuildCli.usage())
-      process.exit(0)
-    }
-    const targets = values.targets === undefined
-      ? [Target.host()]
-      : values.targets.split(',').map(part => part.trim()).filter(part => part !== '').map(spec => Target.parse(spec))
-    if (targets.length === 0) throw new Error('build-exe-for-python-sdk: --targets is empty.')
-    const seen = new Set<string>()
-    for (const target of targets) {
-      const key = `${target.platform}-${target.arch}`
-      if (seen.has(key)) {
-        throw new Error(`build-exe-for-python-sdk: duplicate platform-arch ${key} in --targets; canonical product names would collide.`)
-      }
-      seen.add(key)
-    }
-    return new BuildCli(targets, values['skip-build'], values['dry-run'])
-  }
-
-  private static parseRaw(argv: string[]) {
-    return parseArgs({
-      args: argv,
-      options: {
-        'targets': { type: 'string' },
-        'skip-build': { type: 'boolean', default: false },
-        'dry-run': { type: 'boolean', default: false },
-        'help': { type: 'boolean', default: false },
-      },
-    }).values
-  }
-
-  private static usage(): string {
-    return [
-      'Usage: pnpm exec tsx scripts/build-exe-for-python-sdk.ts [flags]',
-      '',
-      '  --targets=<t1,t2,...>  pkg targets, e.g. node24-linux-x64,node24-linux-arm64,node24-macos-arm64,node24-win-x64.',
-      '                         Default: the host platform only (on node24).',
-      '  --skip-build           skip `pnpm run build` (lib/ artifacts must already exist).',
-      '  --dry-run              print every command and config patch without executing.',
-      '  --help                 print this help.',
-      '',
-      `Build route: ${PKG_SPEC} --sea; see .agents/notes/implemented/architecture/2026-07-10-single-file-executable-sdk-runtime-distribution.md.`,
-      `Stages the node carrier in ${PYTHON_RUNTIME_DIR}/${PYTHON_NODE_SUBDIR} and writes executables to ${OUT_DIR}/.`,
-    ].join('\n')
-  }
+/** The builder's usage text. */
+function usage(): string {
+  return [
+    'Usage: pnpm exec tsx scripts/build-exe-for-python-sdk.ts [flags]',
+    '',
+    '  --targets=<t1,t2,...>  pkg targets, e.g. node24-linux-x64,node24-linux-arm64,node24-macos-arm64,node24-win-x64.',
+    '                         Default: the host platform only (on node24).',
+    '  --skip-build           skip `pnpm run build` (lib/ artifacts must already exist).',
+    '  --dry-run              print every command and config patch without executing.',
+    '  --help                 print this help.',
+    '',
+    `Build route: ${PKG_SPEC} --sea; see .agents/notes/implemented/architecture/2026-07-10-single-file-executable-sdk-runtime-distribution.md.`,
+    `Stages the node carrier in ${PYTHON_RUNTIME_DIR}/${PYTHON_NODE_SUBDIR} and writes executables to ${OUT_DIR}/.`,
+  ].join('\n')
 }
 
 function pnpmInvocation(args: string[]): [command: string, args: string[]] {
@@ -245,16 +177,6 @@ function pnpmInvocation(args: string[]): [command: string, args: string[]] {
 }
 
 /**
- * Render a command for logs and errors, quoting arguments with spaces.
- * @param command - the executable.
- * @param args - its arguments.
- * @returns the printable command line.
- */
-function formatCommand(command: string, args: string[]): string {
-  return [command, ...args].map(part => (part.includes(' ') ? JSON.stringify(part) : part)).join(' ')
-}
-
-/**
  * Sequential build pipeline. Subprocesses inherit stdio and errors include
  * the command; dry runs print commands and filesystem changes.
  */
@@ -265,7 +187,7 @@ class SingleExeBuild {
   readonly staging = resolve(root, PYTHON_RUNTIME_DIR, PYTHON_NODE_SUBDIR)
   private readonly outDir = resolve(root, OUT_DIR)
 
-  constructor(private readonly cli: BuildCli) {}
+  constructor(private readonly cli: ExeBuilderCli<Target>) {}
 
   /** Verify the closure before compiling or packaging. */
   async verifyClosure(): Promise<void> {
@@ -315,6 +237,10 @@ class SingleExeBuild {
    * instance and a symlink-free packaged payload.
    */
   private async restoreLegacyHoists(): Promise<void> {
+    // Deliberate parallel of the desktop builder's own restore loop; the
+    // narrow ignore range is the sanctioned exception for documented
+    // parallel implementations (quality-gates Agent Note).
+    /* jscpd:ignore-start */
     if (this.cli.dryRun) {
       console.log('build-exe-for-python-sdk: [dry-run] restore direct dependencies omitted by legacy deploy')
       return
@@ -351,6 +277,7 @@ class SingleExeBuild {
     if (restored.length > 0) {
       console.log(`build-exe-for-python-sdk: restored legacy deploy hoists: ${restored.join(', ')}`)
     }
+    /* jscpd:ignore-end */
   }
 
   /** Replace deploy-time package links with files and reject any remaining link. */
@@ -566,38 +493,13 @@ class SingleExeBuild {
   }
 
   /**
-   * Run one subprocess with inherited stdio. Spawn and non-zero-exit errors
-   * include the command; dry runs only print it.
+   * Run one subprocess step through the shared runner.
    * @param label - the step name used in logs and error messages.
    * @param command - the executable.
    * @param args - its arguments.
    */
   private async run(label: string, command: string, args: string[]): Promise<void> {
-    const printable = formatCommand(command, args)
-    if (this.cli.dryRun) {
-      console.log(`build-exe-for-python-sdk: [dry-run] ${printable}`)
-      return
-    }
-    console.log(`build-exe-for-python-sdk: ${label}: ${printable}`)
-    await new Promise<void>((resolvePromise, reject) => {
-      const child = spawn(command, args, {
-        cwd: root,
-        stdio: 'inherit',
-        // Artifact builds must not mutate or validate a developer's Git hooks.
-        env: { ...process.env, CI: 'true' },
-      })
-      child.once('error', (error) => {
-        reject(new Error(`build-exe-for-python-sdk: ${label} failed to spawn: ${error.message} (${printable})`))
-      })
-      child.once('exit', (code, signal) => {
-        if (code === 0) {
-          resolvePromise()
-          return
-        }
-        const cause = code === null ? `signal ${signal ?? 'unknown'}` : `exit code ${code}`
-        reject(new Error(`build-exe-for-python-sdk: ${label} failed (${cause}): ${printable}`))
-      })
-    })
+    await runExeStep({ prefix: LABEL, step: label, command, args, dryRun: this.cli.dryRun, cwd: root })
   }
 
   /** Run pnpm through its JavaScript entrypoint when the caller supplies one. */
@@ -608,7 +510,19 @@ class SingleExeBuild {
 }
 
 async function main(): Promise<void> {
-  const cli = BuildCli.parse(process.argv.slice(2))
+  // Deliberate parallel of the desktop builder's own wiring into the shared
+  // CLI class; the narrow ignore range is the sanctioned exception for
+  // documented parallel implementations (quality-gates Agent Note).
+  /* jscpd:ignore-start */
+  const cli = ExeBuilderCli.parse(process.argv.slice(2), {
+    label: LABEL,
+    usage: usage(),
+    host: () => Target.host(),
+    parse: spec => Target.parse(spec),
+    key: target => `${target.platform}-${target.arch}`,
+    duplicate: key => `duplicate platform-arch ${key} in --targets; canonical product names would collide.`,
+  })
+  /* jscpd:ignore-end */
   const pipeline = new SingleExeBuild(cli)
   console.log(`build-exe-for-python-sdk: targets: ${cli.targets.map(target => target.spec).join(', ')}`)
   console.log(`build-exe-for-python-sdk: staging: ${pipeline.staging}`)

@@ -42,6 +42,11 @@ allowBuilds:
   node-addon-require-builtin: false
   # JSONL durability calls MoveFileExW with write-through publication on Windows.
   koffi: true
+  # The desktop shell needs Electron's npm payload (types, fuses, packaging
+  # metadata) but not its binary-download postinstall: gates and CI never
+  # launch the shell, and a developer who wants to run it approves builds
+  # locally (pnpm approve-builds) to fetch the platform binary.
+  electron: false
   # The Python runtime deploy includes the reviewed workspace postinstall that
   # restores the executable bit on node-pty's macOS spawn helper.
   '@deepseek-ai/dsh-subprocess-local@file:packages/subprocess/subprocess-local': true
@@ -59,6 +64,7 @@ minimumReleaseAgeExclude:
   - node-addon-require-builtin-win32-ia32-msvc@0.1.4
   - node-addon-require-builtin-win32-x64-msvc@0.1.4
   - node-addon-require-builtin@0.1.4
+  - electron@44.1.1
   # The active pnpm supply-chain policy blocks this reviewed runtime closure
   # until its release-age window expires unless every exact package is exempt.
   - '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.241'

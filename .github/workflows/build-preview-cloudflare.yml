@@ -32,6 +32,10 @@ env:
 
 jobs:
   preview:
+    # The preview platform — the Cloudflare Pages project, its Access app, and
+    # the runner pool — belongs to the upstream deployment. Elsewhere the job
+    # skips rather than queueing on a pool label no runner satisfies.
+    if: github.repository_owner == 'deepseek-harness'
     runs-on: dsh-ubuntu-24-04-16core
     name: cloudflare pages preview
     steps:

@@ -56,6 +56,10 @@ const experimentalPackageNamePrefix = '@deepseek-ai/dsh-experimental-'
 const releaseMemberDirectory = /^(?:packages\/(?!experimental\/)[^/]+\/[^/]+|apps\/[^/]+|vendor\/[^/]+)$/
 const localArtifactDirs = new Set(['node_modules'])
 const appPackageFiles: Readonly<Record<string, readonly string[]>> = {
+  // The desktop shell has no npm payload yet; its distribution artifact is a
+  // future packaged installer, so the policy pins an empty files list.
+  '@deepseek-ai/dsh-desktop': [],
+  '@deepseek-ai/dsh-desktop-runtime': [],
   '@deepseek-ai/dsh': ['lib/*.js'],
   // Sourcemaps stay out by payload policy; the worker-preview surface
   // (dist/preview.html and dist/preview/) backs private experimental

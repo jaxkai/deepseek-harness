@@ -148,9 +148,12 @@ describe('CI workflow', () => {
       expect(install!.run).not.toContain('$cloneFlag')
     }
 
-    // windows-coverage uses the lower 4-partition profile.
+    // windows-coverage uses the lower 4-partition profile upstream; the
+    // hosted fallback sizes the lane to a 4-vCPU runner instead.
     expect(windowsCoverage.name).toBe('windows node 24 / coverage')
-    expect(windowsCoverage.env).toMatchObject({ DSH_COVERAGE_PARTITIONS: '4' })
+    expect(windowsCoverage.env).toMatchObject({
+      DSH_COVERAGE_PARTITIONS: "${{ github.repository_owner != 'deepseek-harness' && '2' || '4' }}",
+    })
     const coverageSteps = windowsCoverage.steps as unknown[]
     const coverageCommands = coverageSteps.filter((step): step is Record<string, unknown> & { run: string } => (
       isRecord(step) && typeof step.run === 'string'
@@ -672,7 +675,10 @@ describe('Issue lifecycle workflow', () => {
     expect(lifecyclePullRequest.types).not.toContain('ready_for_review')
     expect(lifecyclePullRequest.types).toContain('review_requested')
     expect(lifecycleReview.types).toEqual(['submitted'])
-    const gated = "${{ github.event_name != 'pull_request_review' || github.event.review.state == 'changes_requested' }}"
+    // The write-capable steps additionally require the issue-management App
+    // to be configured: a deployment without DSH_ISSUE_APP_CLIENT_ID (a fork)
+    // skips the board automation rather than failing the check.
+    const gated = "${{ (github.event_name != 'pull_request_review' || github.event.review.state == 'changes_requested') && vars.DSH_ISSUE_APP_CLIENT_ID != '' }}"
     const steps = lifecycleJob.steps.filter(isRecord)
     const tokenStep = steps.find(s => s.name === 'Create project token')
     const handleStep = steps.find(s => s.name === 'Handle repository event')
