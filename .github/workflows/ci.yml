@@ -106,12 +106,15 @@ jobs:
     env:
       # Outside the upstream org these lanes land on 4-vCPU hosted runners,
       # where the enterprise-pool budgets oversubscribe the host and the
-      # load-sensitive suites (process-spawning coverage, expected-output
-      # boots) fail on their own timeouts; the hosted arm sizes each budget
-      # to that host instead. Upstream values are unchanged.
+      # load-sensitive suites (process-spawning coverage, timing-inference
+      # terminals, expected-output boots) fail on their own budgets; the
+      # hosted arm runs the two coverage gates one at a time — during the
+      # partitioned gate only the two single-worker partition processes are
+      # live, so every timing-sensitive suite runs on a quiet host. Upstream
+      # values are unchanged.
       DSH_COVERAGE_MAX_WORKERS: ${{ github.repository_owner != 'deepseek-harness' && '4' || '6' }}
       DSH_COVERAGE_PARTITIONS: ${{ github.repository_owner != 'deepseek-harness' && '2' || '4' }}
-      DSH_GATE_CONCURRENCY: ${{ github.repository_owner != 'deepseek-harness' && '2' || '3' }}
+      DSH_GATE_CONCURRENCY: ${{ github.repository_owner != 'deepseek-harness' && '1' || '3' }}
       # A gate failure aborts the sibling gate instead of waiting out its
       # multi-minute instrumented run.
       DSH_GATE_FAIL_FAST: '1'
@@ -503,7 +506,7 @@ jobs:
       DSH_COVERAGE_MAX_WORKERS: ${{ github.repository_owner != 'deepseek-harness' && '4' || '6' }}
       DSH_COVERAGE_PARTITIONS: ${{ github.repository_owner != 'deepseek-harness' && '2' || '4' }}
       DSH_COVERAGE_TEST_TIMEOUT_MS: '90000'
-      DSH_GATE_CONCURRENCY: ${{ github.repository_owner != 'deepseek-harness' && '2' || '3' }}
+      DSH_GATE_CONCURRENCY: ${{ github.repository_owner != 'deepseek-harness' && '1' || '3' }}
       # A gate failure aborts the sibling gate instead of waiting out its
       # multi-minute instrumented run.
       DSH_GATE_FAIL_FAST: '1'

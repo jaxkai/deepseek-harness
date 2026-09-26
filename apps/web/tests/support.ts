@@ -18,17 +18,27 @@ export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
 export const ZH_BROWSER_LOCALE = 'zh-CN'
 
 /**
+ * The browser IANA zone the recorded-session corpus was captured in: the
+ * persisted-replay fixtures pin the `clientTimeZone` their recording pages
+ * sent, so the lane's pages must run in that zone on every host or every
+ * replay comparison diverges on the runner's local zone.
+ */
+export const CORPUS_BROWSER_ZONE = 'Asia/Shanghai'
+
+/**
  * Open the standard browser-test page advertising English before client boot.
  * This keeps role locators and goldens deterministic while leaving the Host
  * settings document free to override the provisional browser-derived locale;
  * scenarios asserting the Chinese surface advertise
  * {@link ZH_BROWSER_LOCALE} instead.
+ * The page runs in the corpus recording zone ({@link CORPUS_BROWSER_ZONE}) so
+ * replayed `clientTimeZone` facts match their fixtures on every host.
  * @param browser - Playwright browser owning the page.
  * @param height - Viewport height; width is fixed to the lane baseline.
  * @returns the initialized page.
  */
 export async function newEnglishPage(browser: Browser, height = 1000): Promise<Page> {
-  return await browser.newPage({ viewport: { width: 1680, height }, locale: 'en-US' })
+  return await browser.newPage({ viewport: { width: 1680, height }, locale: 'en-US', timezoneId: CORPUS_BROWSER_ZONE })
 }
 
 /**
