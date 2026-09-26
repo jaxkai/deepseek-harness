@@ -14,6 +14,10 @@ permissions:
 jobs:
   policy:
     name: Issue policy
+    # The trusted-policy validation belongs to the upstream issue-management
+    # deployment: a deployment without the App configured (a fork) skips it —
+    # the same deployment marker the lifecycle workflow gates on.
+    if: ${{ vars.DSH_ISSUE_APP_CLIENT_ID != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out trusted policy
